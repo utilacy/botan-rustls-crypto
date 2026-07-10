@@ -57,7 +57,11 @@ pub(crate) struct Tls12Aead(pub(crate) BotanCipher);
 
 impl Tls12AeadAlgorithm for Tls12Aead {
     fn encrypter(&self, key: AeadKey, iv: &[u8], extra: &[u8]) -> Box<dyn MessageEncrypter> {
-        Box::new(Tls12Crypter)
+        todo!()
+        // Box::new(Tls12Crypter{
+        //     cipher: ,
+        //     iv: iv,
+        // })
     }
 
     fn decrypter(&self, key: AeadKey, iv: &[u8]) -> Box<dyn MessageDecrypter> {
@@ -229,5 +233,52 @@ impl MessageEncrypter for Tls12Crypter {
 
     fn encrypted_payload_len(&self, payload_len: usize) -> usize {
         todo!()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use rustls::ContentType::ApplicationData;
+    use rustls::ProtocolVersion::TLSv1_3;
+    use rustls::crypto::cipher::AeadKey;
+    use rustls::crypto::cipher::BorrowedPayload;
+    use rustls::crypto::cipher::InboundOpaqueMessage;
+    use rustls::crypto::cipher::InboundPlainMessage;
+    use rustls::crypto::cipher::Iv;
+    use rustls::crypto::cipher::MessageEncrypter;
+    use rustls::crypto::cipher::NONCE_LEN;
+    use rustls::crypto::cipher::OutboundOpaqueMessage;
+    use rustls::crypto::cipher::OutboundPlainMessage;
+    use rustls::crypto::cipher::Tls13AeadAlgorithm;
+
+    use super::BotanCipher;
+    use super::Tls13Aead;
+
+    #[test]
+    fn encrypt_decrypt_test() {
+        let payload: &'static [u8; 3] = b"123";
+        // we can only test aes256 because `AeadKey` cannot be constructed with custom keysize
+        let aead: Tls13Aead = Tls13Aead(BotanCipher::Aes256Gcm);
+        let key = AeadKey::from([1u8; 32]);
+        let iv: Iv = Iv::new([2u8; NONCE_LEN]);
+        let mut encryper: Box<dyn MessageEncrypter + 'static> = aead.encrypter(key, iv);
+        let msg: OutboundPlainMessage = OutboundPlainMessage {
+            typ: ApplicationData,
+            version: TLSv1_3,
+            payload: payload.as_ref().into(),
+        };
+        let mut encrypted_payload: OutboundOpaqueMessage = encryper.encrypt(msg, 10u64).unwrap();
+
+        let key = AeadKey::from([1u8; 32]);
+        let iv: Iv = Iv::new([2u8; NONCE_LEN]);
+        let mut decryptor = aead.decrypter(key, iv);
+
+        let msg: InboundOpaqueMessage = InboundOpaqueMessage::new(
+            encrypted_payload.typ,
+            encrypted_payload.version,
+            encrypted_payload.payload.as_mut(),
+        );
+        let decrypted_payload: InboundPlainMessage<'_> = decryptor.decrypt(msg, 10u64).unwrap();
+        assert_eq!(decrypted_payload.payload, payload);
     }
 }
