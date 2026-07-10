@@ -1,10 +1,6 @@
 use rustls::crypto::hmac::{Hmac, Key, Tag};
 use zeroize::Zeroizing;
 
-pub(crate) static HMAC_SHA256: BotanHmac = BotanHmac::HmacSha256;
-
-pub(crate) static HMAC_SHA384: BotanHmac = BotanHmac::HmacSha384;
-
 #[derive(Copy, Clone, Debug)]
 pub(crate) enum BotanHmac {
     HmacSha256,
@@ -68,5 +64,25 @@ impl Key for BotanHmacKey {
 
     fn tag_len(&self) -> usize {
         self.hmac.output_len()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use rustls::crypto::hmac::{Hmac, Tag};
+
+    use crate::botan_hmac::BotanHmac;
+
+    #[test]
+    fn test_hmac() {
+        let hmac = BotanHmac::HmacSha256;
+        let key = [1u8; 10];
+        let hmac_keyed = hmac.with_key(key.as_ref());
+        let tag: Tag = hmac_keyed.sign_concat(&[2; 12], &[&[3; 13], &[4; 14]], &[5; 15]);
+        static EXPECTED: &'static [u8] = &[
+            204, 111, 31, 19, 216, 229, 159, 82, 210, 79, 249, 110, 225, 37, 207, 215, 44, 237,
+            239, 215, 57, 183, 181, 120, 202, 203, 13, 48, 209, 93, 1, 115,
+        ];
+        assert_eq!(tag.as_ref(), EXPECTED);
     }
 }

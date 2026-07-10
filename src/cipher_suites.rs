@@ -19,7 +19,7 @@ pub(crate) static TLS13_AES_256_GCM_SHA384: SupportedCipherSuite =
             hash_provider: &botan_hash::SHA384,
             confidentiality_limit: AES_GCM_CONF_LIMIT,
         },
-        hkdf_provider: &HkdfUsingHmac(&botan_hmac::HMAC_SHA384),
+        hkdf_provider: &HkdfUsingHmac(&botan_hmac::BotanHmac::HmacSha256),
         aead_alg: &Tls13Aead(BotanCipher::Aes256Gcm),
         quic: None,
     });
@@ -31,7 +31,7 @@ pub(crate) static TLS13_AES_128_GCM_SHA256: SupportedCipherSuite =
             hash_provider: &botan_hash::SHA256,
             confidentiality_limit: AES_GCM_CONF_LIMIT,
         },
-        hkdf_provider: &HkdfUsingHmac(&botan_hmac::HMAC_SHA256),
+        hkdf_provider: &HkdfUsingHmac(&botan_hmac::BotanHmac::HmacSha256),
         aead_alg: &Tls13Aead(BotanCipher::Aes128Gcm),
         quic: None,
     });
