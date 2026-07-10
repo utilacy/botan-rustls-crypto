@@ -46,7 +46,7 @@ impl Hash for BotanHash {
 impl From<&BotanHash> for botan::HashFunction {
     fn from(value: &BotanHash) -> Self {
         botan::HashFunction::new(value.name)
-            .expect(format!("Botan should provide hash function: {}", value.name).as_str())
+            .unwrap_or_else(|_| panic!("Botan should provide hash function: {}", value.name))
     }
 }
 
@@ -81,22 +81,22 @@ mod tests {
     fn test_sha256() {
         assert_eq!(super::SHA256.fips(), false);
         assert_eq!(super::SHA256.algorithm(), HashAlgorithm::SHA256);
-        static expected: &[u8] = &[
+        static EXPECTED: &[u8] = &[
             159, 100, 167, 71, 225, 185, 127, 19, 31, 171, 182, 180, 71, 41, 108, 155, 111, 2, 1,
             231, 159, 179, 197, 53, 110, 108, 119, 232, 155, 106, 128, 106,
         ];
-        assert_eq!(super::SHA256.hash(&[1, 2, 3, 4]).as_ref(), expected);
+        assert_eq!(super::SHA256.hash(&[1, 2, 3, 4]).as_ref(), EXPECTED);
     }
 
     #[test]
     fn test_sha384() {
         assert_eq!(super::SHA384.fips(), false);
         assert_eq!(super::SHA384.algorithm(), HashAlgorithm::SHA384);
-        static expected: &[u8] = &[
+        static EXPECTED: &[u8] = &[
             90, 102, 125, 98, 67, 10, 140, 37, 62, 186, 228, 51, 51, 57, 4, 220, 110, 29, 65, 220,
             220, 71, 151, 4, 119, 49, 89, 185, 5, 163, 173, 130, 210, 186, 215, 118, 45, 129, 163,
             102, 204, 70, 251, 178, 226, 50, 127, 92,
         ];
-        assert_eq!(super::SHA384.hash(&[1, 2, 3, 4]).as_ref(), expected);
+        assert_eq!(super::SHA384.hash(&[1, 2, 3, 4]).as_ref(), EXPECTED);
     }
 }
