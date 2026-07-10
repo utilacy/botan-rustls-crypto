@@ -58,6 +58,7 @@ pub(crate) enum BotanCipher {
 }
 
 impl BotanCipher {
+    /// Names of cipher that need to match what is expected from `botan::Cipher::new`
     fn botan_name(self) -> &'static str {
         match self {
             Self::Aes128Gcm => "AES-128/GCM",
@@ -65,6 +66,7 @@ impl BotanCipher {
         }
     }
 
+    /// Length of the keys used in the cipher
     fn key_len(self) -> usize {
         match self {
             Self::Aes128Gcm => 16,
@@ -91,8 +93,9 @@ impl BotanCipher {
     }
 }
 
-/// One-shot AEAD seal: returns ciphertext with the tag appended.
-fn seal(
+/// One-shot AEAD encrypt
+/// Returns ciphertext||tag
+fn oneshot_encrypt(
     cipher: &mut botan::Cipher,
     nonce: &[u8],
     aad: &[u8],
@@ -104,14 +107,21 @@ fn seal(
         .map_err(|_| Error::EncryptError)
 }
 
-/// One-shot AEAD open of ciphertext‖tag: authenticates, then returns the plaintext.
-fn open(cipher: &mut botan::Cipher, nonce: &[u8], aad: &[u8], ct: &[u8]) -> Result<Vec<u8>, Error> {
+/// One-shot AEAD decrypt of ciphertext||tag
+/// Checks tag, then returns the plaintext
+fn oneshot_decrypt(
+    cipher: &mut botan::Cipher,
+    nonce: &[u8],
+    aad: &[u8],
+    ct: &[u8],
+) -> Result<Vec<u8>, Error> {
     cipher
         .set_associated_data(aad)
         .and_then(|()| cipher.process(nonce, ct))
         .map_err(|_| Error::DecryptError)
 }
 
+/// Bridge between rustls `MessageEncryptor` and `MessageDecryptor` for botan provided cipher
 struct Tls13Crypter {
     cipher: botan::Cipher,
     iv: Iv,
@@ -123,23 +133,23 @@ impl MessageEncrypter for Tls13Crypter {
         m: OutboundPlainMessage<'_>,
         seq: u64,
     ) -> Result<OutboundOpaqueMessage, Error> {
-        let total_len = self.encrypted_payload_len(m.payload.len());
-
-        // TLSInnerPlaintext: content ‖ real content type (no padding).
+        // TLS 1.3 specific: plaintext = content || real content type
         let mut plain = Vec::with_capacity(m.payload.len() + 1);
         m.payload.copy_to_vec(&mut plain);
         plain.extend_from_slice(&m.typ.to_array());
 
+        let expected_ct_len = self.encrypted_payload_len(m.payload.len());
         let nonce = Nonce::new(&self.iv, seq).0;
-        let aad = make_tls13_aad(total_len);
-        let ct = seal(&mut self.cipher, &nonce, &aad, &plain)?;
-        debug_assert_eq!(ct.len(), total_len);
+        let aad = make_tls13_aad(expected_ct_len);
+        let ct = oneshot_encrypt(&mut self.cipher, &nonce, &aad, &plain)?;
+        debug_assert_eq!(ct.len(), expected_ct_len);
 
-        let mut payload = PrefixedPayload::with_capacity(total_len);
+        // create a rustls `OutboundOpagueMessage` from ct:
+        let mut payload = PrefixedPayload::with_capacity(expected_ct_len);
         payload.extend_from_slice(&ct);
         Ok(OutboundOpaqueMessage::new(
             ContentType::ApplicationData,
-            // TLS 1.3 records carry the legacy version (RFC 8446 §5.1).
+            // TLS 1.3 records carry the legacy version (RFC 8446 5.1).
             ProtocolVersion::TLSv1_2,
             payload,
         ))
@@ -160,10 +170,11 @@ impl MessageDecrypter for Tls13Crypter {
             return Err(Error::DecryptError);
         }
 
-        let nonce = Nonce::new(&self.iv, seq).0;
-        let aad = make_tls13_aad(m.payload.len());
-        let plain = open(&mut self.cipher, &nonce, &aad, &m.payload)?;
+        let nonce: [u8; 12] = Nonce::new(&self.iv, seq).0;
+        let aad: [u8; 5] = make_tls13_aad(m.payload.len());
+        let plain: Vec<u8> = oneshot_decrypt(&mut self.cipher, &nonce, &aad, &m.payload)?;
 
+        // copy plain into `InboundPlainMessage`
         let payload = &mut m.payload;
         payload[..plain.len()].copy_from_slice(&plain);
         payload.truncate(plain.len());
