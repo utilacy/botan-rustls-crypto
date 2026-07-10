@@ -4,6 +4,7 @@ mod botan_aead;
 mod botan_hash;
 mod botan_hmac;
 mod cipher_suites;
+mod kx_groups;
 
 use rustls::{CipherSuite, SupportedCipherSuite, crypto::CryptoProvider};
 
@@ -22,7 +23,7 @@ fn supported_cipher_suites() -> Vec<SupportedCipherSuite> {
         // TLS 1.3
         cipher_suites::TLS13_AES_256_GCM_SHA384,
         cipher_suites::TLS13_AES_128_GCM_SHA256,
-        // CipherSuite::TLS13_AES_128_GCM_SHA256,
+        // TODO implement bindings to chacha20
         // CipherSuite::TLS13_CHACHA20_POLY1305_SHA256,
         // // TLS 1.2
         // CipherSuite::TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
@@ -40,7 +41,7 @@ mod tests {
     use crate::provider;
 
     #[test]
-    fn test_it() {
-        // provider();
+    fn create_provider() {
+        provider();
     }
 }
