@@ -7,9 +7,9 @@ mod cipher_suites;
 
 use rustls::{CipherSuite, SupportedCipherSuite, crypto::CryptoProvider};
 
-pub fn provider(enabled_cipher_suites: Option<&[SupportedCipherSuite]>) -> CryptoProvider {
+pub fn provider() -> CryptoProvider {
     CryptoProvider {
-        cipher_suites: supported_cipher_suites(enabled_cipher_suites),
+        cipher_suites: supported_cipher_suites(),
         kx_groups: todo!(),
         signature_verification_algorithms: todo!(),
         secure_random: todo!(),
@@ -17,13 +17,11 @@ pub fn provider(enabled_cipher_suites: Option<&[SupportedCipherSuite]>) -> Crypt
     }
 }
 
-fn supported_cipher_suites(
-    enabled_cipher_suits: Option<&[SupportedCipherSuite]>,
-) -> Vec<SupportedCipherSuite> {
+fn supported_cipher_suites() -> Vec<SupportedCipherSuite> {
     static ALL_CIPHER_SUITES: &[SupportedCipherSuite] = &[
-        // crate::cipher_suites::TLS13_AES_256_GCM_SHA384,
-        // // TLS 1.3
-        // CipherSuite::TLS13_AES_256_GCM_SHA384,
+        // TLS 1.3
+        cipher_suites::TLS13_AES_256_GCM_SHA384,
+        cipher_suites::TLS13_AES_128_GCM_SHA256,
         // CipherSuite::TLS13_AES_128_GCM_SHA256,
         // CipherSuite::TLS13_CHACHA20_POLY1305_SHA256,
         // // TLS 1.2
