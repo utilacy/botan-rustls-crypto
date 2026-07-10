@@ -1,33 +1,44 @@
 use rustls::crypto::hmac::{Hmac, Key, Tag};
 use zeroize::Zeroizing;
 
-pub(crate) static HMAC_SHA256: BotanHmac = BotanHmac {
-    name: "HMAC(SHA-256)",
-    output_len: 32,
-};
+pub(crate) static HMAC_SHA256: BotanHmac = BotanHmac::HmacSha256;
 
-pub(crate) static HMAC_SHA384: BotanHmac = BotanHmac {
-    name: "HMAC(SHA-384)",
-    output_len: 48,
-};
+pub(crate) static HMAC_SHA384: BotanHmac = BotanHmac::HmacSha384;
 
-/// [`Hmac`] backed by Botan's HMAC.
-pub(crate) struct BotanHmac {
-    name: &'static str,
-    output_len: usize,
+#[derive(Copy, Clone, Debug)]
+pub(crate) enum BotanHmac {
+    HmacSha256,
+    HmacSha384,
+}
+
+impl BotanHmac {
+    #[inline(always)]
+    fn name(self) -> &'static str {
+        match self {
+            // needs to match what botan expects
+            BotanHmac::HmacSha256 => "HMAC(SHA-256)",
+            BotanHmac::HmacSha384 => "HMAC(SHA-384)",
+        }
+    }
+    #[inline(always)]
+    fn output_len(self) -> usize {
+        match self {
+            BotanHmac::HmacSha256 => 32,
+            BotanHmac::HmacSha384 => 48,
+        }
+    }
 }
 
 impl Hmac for BotanHmac {
     fn with_key(&self, key: &[u8]) -> Box<dyn Key> {
         Box::new(BotanHmacKey {
-            name: self.name,
+            hmac: *self,
             key: Zeroizing::new(key.to_vec()),
-            output_len: self.output_len,
         })
     }
 
     fn hash_output_len(&self) -> usize {
-        self.output_len
+        self.output_len()
     }
 }
 
@@ -36,24 +47,26 @@ impl Hmac for BotanHmac {
 /// negligible for the handful of PRF/HKDF invocations per handshake, and it
 /// keeps this type lock-free despite `sign_concat` taking `&self`.
 struct BotanHmacKey {
-    name: &'static str,
+    hmac: BotanHmac,
     key: Zeroizing<Vec<u8>>,
-    output_len: usize,
 }
 
 impl Key for BotanHmacKey {
     fn sign_concat(&self, first: &[u8], middle: &[&[u8]], last: &[u8]) -> Tag {
-        let mut mac = botan::MsgAuthCode::new(self.name).expect("botan provides HMAC");
+        let mut mac = botan::MsgAuthCode::new(self.hmac.name())
+            .expect("unexpected botan should provide HMAC");
         mac.set_key(&self.key).expect("HMAC accepts any key length");
-        mac.update(first).expect("hmac update");
+        mac.update(first)
+            .expect("unexpected error: hmac update first");
         for d in middle {
-            mac.update(d).expect("hmac update");
+            mac.update(d).expect("unexpected error: hmac update middle");
         }
-        mac.update(last).expect("hmac update");
-        Tag::new(&mac.finish().expect("hmac finish"))
+        mac.update(last)
+            .expect("unexpected error: hmac update last");
+        Tag::new(&mac.finish().expect("unexpected error: hmac finish"))
     }
 
     fn tag_len(&self) -> usize {
-        self.output_len
+        self.hmac.output_len()
     }
 }

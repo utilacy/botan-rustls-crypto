@@ -3,8 +3,8 @@ use rustls::{
     ConnectionTrafficSecrets, ContentType, Error, ProtocolVersion,
     crypto::cipher::{
         AeadKey, InboundOpaqueMessage, InboundPlainMessage, Iv, MessageDecrypter, MessageEncrypter,
-        Nonce, OutboundOpaqueMessage, OutboundPlainMessage, PrefixedPayload, Tls13AeadAlgorithm,
-        UnsupportedOperationError, make_tls13_aad,
+        Nonce, OutboundOpaqueMessage, OutboundPlainMessage, PrefixedPayload, Tls12AeadAlgorithm,
+        Tls13AeadAlgorithm, UnsupportedOperationError, make_tls13_aad,
     },
 };
 
@@ -18,6 +18,8 @@ const GCM_OVERHEAD: usize = GCM_EXPLICIT_NONCE_LEN + TAG_LEN;
 const MAX_FRAGMENT_LEN: usize = 16384;
 
 /// A bridge implementation, implementing `Tls13AeadAlgorithm` for a botan provided stream cipher
+/// We seperate the cipher from which TLS version we are using, in order to reuse Botancipher for
+/// 1.2
 pub(crate) struct Tls13Aead(pub(crate) BotanCipher);
 
 impl Tls13AeadAlgorithm for Tls13Aead {
@@ -48,6 +50,31 @@ impl Tls13AeadAlgorithm for Tls13Aead {
             BotanCipher::Aes128Gcm => ConnectionTrafficSecrets::Aes128Gcm { key, iv },
             BotanCipher::Aes256Gcm => ConnectionTrafficSecrets::Aes256Gcm { key, iv },
         })
+    }
+}
+
+pub(crate) struct Tls12Aead(pub(crate) BotanCipher);
+
+impl Tls12AeadAlgorithm for Tls12Aead {
+    fn encrypter(&self, key: AeadKey, iv: &[u8], extra: &[u8]) -> Box<dyn MessageEncrypter> {
+        Box::new(Tls12Crypter)
+    }
+
+    fn decrypter(&self, key: AeadKey, iv: &[u8]) -> Box<dyn MessageDecrypter> {
+        todo!()
+    }
+
+    fn key_block_shape(&self) -> rustls::crypto::cipher::KeyBlockShape {
+        todo!()
+    }
+
+    fn extract_keys(
+        &self,
+        key: AeadKey,
+        iv: &[u8],
+        explicit: &[u8],
+    ) -> Result<ConnectionTrafficSecrets, UnsupportedOperationError> {
+        todo!()
     }
 }
 
@@ -122,6 +149,7 @@ fn oneshot_decrypt(
 }
 
 /// Bridge between rustls `MessageEncryptor` and `MessageDecryptor` for botan provided cipher
+/// for TLS 1.2 application records
 struct Tls13Crypter {
     cipher: botan::Cipher,
     iv: Iv,
@@ -179,5 +207,27 @@ impl MessageDecrypter for Tls13Crypter {
         payload[..plain.len()].copy_from_slice(&plain);
         payload.truncate(plain.len());
         m.into_tls13_unpadded_message()
+    }
+}
+
+/// Bridge between rustls `MessageEncryptor` and `MessageDecryptor` for botan provided cipher
+/// for TLS 1.2 application records
+///
+struct Tls12Crypter {
+    cipher: botan::Cipher,
+    iv: Iv,
+}
+
+impl MessageEncrypter for Tls12Crypter {
+    fn encrypt(
+        &mut self,
+        msg: OutboundPlainMessage<'_>,
+        seq: u64,
+    ) -> Result<OutboundOpaqueMessage, Error> {
+        todo!()
+    }
+
+    fn encrypted_payload_len(&self, payload_len: usize) -> usize {
+        todo!()
     }
 }
