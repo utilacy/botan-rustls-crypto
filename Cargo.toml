@@ -1,10 +1,18 @@
 [package]
-name = "botan-crypto-provider2"
-version = "0.1.0"
+name = "botan-crypto-provider"
+version = "1.0.0"
 edition = "2024"
+
+[features]
+# Compile Botan 3 from source and link it statically
+vendored = ["botan/vendored"]
 
 [dependencies]
 botan = "0.13.0"
 rustls = { version = "0.23.41", default-features = false, features = ["std", "tls12", "logging"] }
 zeroize = "1.9.0"
 subtle = "2.6"
+
+[dev-dependencies]
+rcgen = "0.13"
+rustls = { version = "0.23.41", default-features = false, features = ["ring", "std", "tls12", "logging"] }

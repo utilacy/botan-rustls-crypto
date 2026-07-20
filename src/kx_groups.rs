@@ -11,9 +11,31 @@ use rustls::{
 use subtle::ConstantTimeEq;
 use zeroize::Zeroize;
 
-pub static ALL_KX_GROUPS: &[&dyn SupportedKxGroup] = &[
-    // X25519, SECP256R1, SECP384R1
-];
+pub static ALL_KX_GROUPS: &[&dyn SupportedKxGroup] = &[X25519, SECP256R1, SECP384R1];
+
+pub static X25519: &dyn SupportedKxGroup = &BotanKxGroup {
+    name: NamedGroup::X25519,
+    algo: "X25519",
+    params: "",
+    pub_key_len: 32,
+    nist: false,
+};
+
+pub static SECP256R1: &dyn SupportedKxGroup = &BotanKxGroup {
+    name: NamedGroup::secp256r1,
+    algo: "ECDH",
+    params: "secp256r1",
+    pub_key_len: 65,
+    nist: true,
+};
+
+pub static SECP384R1: &dyn SupportedKxGroup = &BotanKxGroup {
+    name: NamedGroup::secp384r1,
+    algo: "ECDH",
+    params: "secp384r1",
+    pub_key_len: 97,
+    nist: true,
+};
 
 struct BotanKxGroup {
     name: NamedGroup,
@@ -124,5 +146,66 @@ impl ActiveKeyExchange for BotanActiveKeyExchange {
 
     fn group(&self) -> NamedGroup {
         self.name
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const GROUPS: &[&dyn SupportedKxGroup] = ALL_KX_GROUPS;
+
+    #[test]
+    fn start_yields_pub_key_of_expected_len() {
+        let expected = [
+            (NamedGroup::X25519, 32),
+            (NamedGroup::secp256r1, 65),
+            (NamedGroup::secp384r1, 97),
+        ];
+        for group in GROUPS {
+            let kx = group.start().expect("start");
+            assert_eq!(kx.group(), group.name());
+            let want = expected
+                .iter()
+                .find(|(n, _)| *n == group.name())
+                .map(|(_, len)| *len)
+                .unwrap_or_else(|| panic!("unexpected group {:?}", group.name()));
+            assert_eq!(kx.pub_key().len(), want, "{:?} pub key len", group.name());
+        }
+    }
+
+    /// Two independent parties on the same group agree on an identical secret.
+    #[test]
+    fn ecdh_agreement_matches_between_parties() {
+        for group in GROUPS {
+            let alice = group.start().expect("alice start");
+            let bob = group.start().expect("bob start");
+
+            let alice_pub = alice.pub_key().to_vec();
+            let bob_pub = bob.pub_key().to_vec();
+
+            let alice_secret = alice.complete(&bob_pub).expect("alice complete");
+            let bob_secret = bob.complete(&alice_pub).expect("bob complete");
+
+            assert_eq!(
+                alice_secret.secret_bytes(),
+                bob_secret.secret_bytes(),
+                "{:?} shared secrets differ",
+                group.name()
+            );
+        }
+    }
+
+    /// A peer key of the wrong length is rejected before any agreement runs.
+    #[test]
+    fn wrong_length_peer_key_is_rejected() {
+        for group in GROUPS {
+            let kx = group.start().expect("start");
+            let bad = vec![0u8; kx.pub_key().len() + 1];
+            assert!(matches!(
+                kx.complete(&bad),
+                Err(PeerMisbehaved(InvalidKeyShare))
+            ));
+        }
     }
 }

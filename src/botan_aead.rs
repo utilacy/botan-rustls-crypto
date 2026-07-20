@@ -2,9 +2,10 @@ use botan::CipherDirection;
 use rustls::{
     ConnectionTrafficSecrets, ContentType, Error, ProtocolVersion,
     crypto::cipher::{
-        AeadKey, InboundOpaqueMessage, InboundPlainMessage, Iv, MessageDecrypter, MessageEncrypter,
-        Nonce, OutboundOpaqueMessage, OutboundPlainMessage, PrefixedPayload, Tls12AeadAlgorithm,
-        Tls13AeadAlgorithm, UnsupportedOperationError, make_tls13_aad,
+        AeadKey, InboundOpaqueMessage, InboundPlainMessage, Iv, KeyBlockShape, MessageDecrypter,
+        MessageEncrypter, NONCE_LEN, Nonce, OutboundOpaqueMessage, OutboundPlainMessage,
+        PrefixedPayload, Tls12AeadAlgorithm, Tls13AeadAlgorithm, UnsupportedOperationError,
+        make_tls12_aad, make_tls13_aad,
     },
 };
 
@@ -57,19 +58,27 @@ pub(crate) struct Tls12Aead(pub(crate) BotanCipher);
 
 impl Tls12AeadAlgorithm for Tls12Aead {
     fn encrypter(&self, key: AeadKey, iv: &[u8], extra: &[u8]) -> Box<dyn MessageEncrypter> {
-        todo!()
-        // Box::new(Tls12Crypter{
-        //     cipher: ,
-        //     iv: iv,
-        // })
+        Box::new(Tls12Crypter {
+            cipher: self.0.cipher(CipherDirection::Encrypt, key.as_ref()),
+            iv: gcm_iv(iv, extra),
+        })
     }
 
     fn decrypter(&self, key: AeadKey, iv: &[u8]) -> Box<dyn MessageDecrypter> {
-        todo!()
+        let mut salt = [0u8; 4];
+        salt.copy_from_slice(iv);
+        Box::new(Tls12Decrypter {
+            cipher: self.0.cipher(CipherDirection::Decrypt, key.as_ref()),
+            salt,
+        })
     }
 
-    fn key_block_shape(&self) -> rustls::crypto::cipher::KeyBlockShape {
-        todo!()
+    fn key_block_shape(&self) -> KeyBlockShape {
+        KeyBlockShape {
+            enc_key_len: self.0.key_len(),
+            fixed_iv_len: 4,
+            explicit_nonce_len: 8,
+        }
     }
 
     fn extract_keys(
@@ -78,7 +87,11 @@ impl Tls12AeadAlgorithm for Tls12Aead {
         iv: &[u8],
         explicit: &[u8],
     ) -> Result<ConnectionTrafficSecrets, UnsupportedOperationError> {
-        todo!()
+        let iv = gcm_iv(iv, explicit);
+        Ok(match self.0 {
+            BotanCipher::Aes128Gcm => ConnectionTrafficSecrets::Aes128Gcm { key, iv },
+            BotanCipher::Aes256Gcm => ConnectionTrafficSecrets::Aes256Gcm { key, iv },
+        })
     }
 }
 
@@ -228,12 +241,69 @@ impl MessageEncrypter for Tls12Crypter {
         msg: OutboundPlainMessage<'_>,
         seq: u64,
     ) -> Result<OutboundOpaqueMessage, Error> {
-        todo!()
+        let total_len = self.encrypted_payload_len(msg.payload.len());
+
+        let nonce = Nonce::new(&self.iv, seq).0;
+        let aad = make_tls12_aad(seq, msg.typ, msg.version, msg.payload.len());
+        let plain = msg.payload.to_vec();
+        let ct = oneshot_encrypt(&mut self.cipher, &nonce, &aad, &plain)?;
+
+        let mut payload = PrefixedPayload::with_capacity(total_len);
+        payload.extend_from_slice(&nonce[4..]);
+        payload.extend_from_slice(&ct);
+        Ok(OutboundOpaqueMessage::new(msg.typ, msg.version, payload))
     }
 
     fn encrypted_payload_len(&self, payload_len: usize) -> usize {
-        todo!()
+        payload_len + GCM_OVERHEAD
     }
+}
+
+struct Tls12Decrypter {
+    cipher: botan::Cipher,
+    salt: [u8; 4],
+}
+
+impl MessageDecrypter for Tls12Decrypter {
+    fn decrypt<'a>(
+        &mut self,
+        mut m: InboundOpaqueMessage<'a>,
+        seq: u64,
+    ) -> Result<InboundPlainMessage<'a>, Error> {
+        if m.payload.len() < GCM_OVERHEAD {
+            return Err(Error::DecryptError);
+        }
+
+        let mut nonce = [0u8; NONCE_LEN];
+        nonce[..4].copy_from_slice(&self.salt);
+        nonce[4..].copy_from_slice(&m.payload[..GCM_EXPLICIT_NONCE_LEN]);
+
+        let aad = make_tls12_aad(seq, m.typ, m.version, m.payload.len() - GCM_OVERHEAD);
+        let plain = oneshot_decrypt(
+            &mut self.cipher,
+            &nonce,
+            &aad,
+            &m.payload[GCM_EXPLICIT_NONCE_LEN..],
+        )?;
+        if plain.len() > MAX_FRAGMENT_LEN {
+            return Err(Error::PeerSentOversizedRecord);
+        }
+
+        let payload = &mut m.payload;
+        payload[..plain.len()].copy_from_slice(&plain);
+        payload.truncate(plain.len());
+        Ok(m.into_plain_message())
+    }
+}
+
+/// The RFC 5288 GCM nonce is salt(4, from key block) || explicit(8, from each record)
+fn gcm_iv(write_iv: &[u8], explicit: &[u8]) -> Iv {
+    debug_assert_eq!(write_iv.len(), 4);
+    debug_assert_eq!(explicit.len(), 8);
+    let mut iv = [0u8; NONCE_LEN];
+    iv[..4].copy_from_slice(write_iv);
+    iv[4..].copy_from_slice(explicit);
+    Iv::new(iv)
 }
 
 #[cfg(test)]
@@ -245,14 +315,20 @@ mod tests {
     use rustls::crypto::cipher::InboundOpaqueMessage;
     use rustls::crypto::cipher::InboundPlainMessage;
     use rustls::crypto::cipher::Iv;
+    use rustls::crypto::cipher::MessageDecrypter;
     use rustls::crypto::cipher::MessageEncrypter;
     use rustls::crypto::cipher::NONCE_LEN;
     use rustls::crypto::cipher::OutboundOpaqueMessage;
     use rustls::crypto::cipher::OutboundPlainMessage;
     use rustls::crypto::cipher::Tls13AeadAlgorithm;
 
+    use botan::CipherDirection;
+    use rustls::Error;
+    use rustls::ProtocolVersion::TLSv1_2;
+
     use super::BotanCipher;
     use super::Tls13Aead;
+    use super::{GCM_OVERHEAD, Tls12Crypter, Tls12Decrypter};
 
     #[test]
     fn encrypt_decrypt_test() {
@@ -280,5 +356,70 @@ mod tests {
         );
         let decrypted_payload: InboundPlainMessage<'_> = decryptor.decrypt(msg, 10u64).unwrap();
         assert_eq!(decrypted_payload.payload, payload);
+    }
+
+    /// Build a matched TLS 1.2 encrypter/decrypter pair that share a key and IV.
+    /// The decrypter's 4-byte salt is the fixed prefix of the encrypter's IV; the
+    /// explicit 8-byte nonce is carried on the wire per record (RFC 5246 AEAD).
+    fn tls12_pair() -> (Tls12Crypter, Tls12Decrypter) {
+        let key = [7u8; 32];
+        let iv_bytes = [9u8; NONCE_LEN];
+
+        let enc = Tls12Crypter {
+            cipher: BotanCipher::Aes256Gcm.cipher(CipherDirection::Encrypt, &key),
+            iv: Iv::new(iv_bytes),
+        };
+        let mut salt = [0u8; 4];
+        salt.copy_from_slice(&iv_bytes[..4]);
+        let dec = Tls12Decrypter {
+            cipher: BotanCipher::Aes256Gcm.cipher(CipherDirection::Decrypt, &key),
+            salt,
+        };
+        (enc, dec)
+    }
+
+    fn tls12_msg(payload: &[u8]) -> OutboundPlainMessage<'_> {
+        OutboundPlainMessage {
+            typ: ApplicationData,
+            version: TLSv1_2,
+            payload: payload.into(),
+        }
+    }
+
+    #[test]
+    fn tls12_encrypt_decrypt_round_trip() {
+        let (mut enc, mut dec) = tls12_pair();
+        let payload: &[u8] = b"hello tls 1.2";
+        let seq = 42u64;
+
+        let mut opaque = enc.encrypt(tls12_msg(payload), seq).unwrap();
+        // Wire record = 8-byte explicit nonce + ciphertext + 16-byte tag.
+        assert_eq!(opaque.payload.as_ref().len(), payload.len() + GCM_OVERHEAD);
+
+        let inbound =
+            InboundOpaqueMessage::new(opaque.typ, opaque.version, opaque.payload.as_mut());
+        let plain = dec.decrypt(inbound, seq).unwrap();
+        assert_eq!(plain.payload, payload);
+    }
+
+    #[test]
+    fn tls12_wrong_seq_fails_to_decrypt() {
+        let (mut enc, mut dec) = tls12_pair();
+        let mut opaque = enc.encrypt(tls12_msg(b"secret"), 1).unwrap();
+
+        // The sequence number feeds both the nonce and the AAD, so a mismatch
+        // must fail the tag check rather than return garbage.
+        let inbound =
+            InboundOpaqueMessage::new(opaque.typ, opaque.version, opaque.payload.as_mut());
+        assert!(matches!(dec.decrypt(inbound, 2), Err(Error::DecryptError)));
+    }
+
+    #[test]
+    fn tls12_rejects_too_short_record() {
+        let (_, mut dec) = tls12_pair();
+        // Fewer bytes than one explicit nonce + tag can never be a valid record.
+        let mut buf = [0u8; GCM_OVERHEAD - 1];
+        let inbound = InboundOpaqueMessage::new(ApplicationData, TLSv1_2, &mut buf);
+        assert!(matches!(dec.decrypt(inbound, 0), Err(Error::DecryptError)));
     }
 }
