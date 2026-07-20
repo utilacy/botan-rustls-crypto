@@ -16,7 +16,7 @@ pub(crate) static SHA384: BotanHash = BotanHash {
 pub(crate) static SHA256: BotanHash = BotanHash {
     name: "SHA-256",
     alg: HashAlgorithm::SHA256,
-    output_len: 24, // 24 bytes is 256 bits
+    output_len: 32, // 32 bytes is 256 bits
 };
 
 impl Hash for BotanHash {

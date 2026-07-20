@@ -1,4 +1,5 @@
 #![allow(unused)]
+#![doc = include_str!("../README.md")]
 
 mod botan_aead;
 mod botan_hash;
@@ -15,6 +16,24 @@ use crate::key_provider::BotanKeyProvider;
 use crate::kx_groups::{ALL_KX_GROUPS, SECP256R1, SECP384R1, X25519};
 use crate::secure_random::BotanRandom;
 
+/// Returns a rustls [`CryptoProvider`] whose cryptography is entirely backed by
+/// the Botan library.
+///
+/// Pass it to a rustls config builder to run TLS through Botan instead of the
+/// default backend:
+///
+/// ```ignore
+/// let config = rustls::ServerConfig::builder_with_provider(
+///         std::sync::Arc::new(botan_crypto_provider::provider()),
+///     )
+///     .with_safe_default_protocol_versions()
+///     .unwrap()
+///     .with_no_client_auth()
+///     .with_single_cert(certs, key)
+///     .unwrap();
+/// ```
+///
+/// See the crate level documentation for the full list of supported algorithms.
 pub fn provider() -> CryptoProvider {
     CryptoProvider {
         cipher_suites: supported_cipher_suites(),
