@@ -7,7 +7,8 @@ license = "MIT OR Apache-2.0"
 description = "A rustls CryptoProvider backed entirely by the Botan cryptography library"
 repository = "https://github.com/utilacy/botan-rustls-crypto"
 readme = "README.md"
-categories = ["crypto"]
+keywords = ["crypto", "cryptography", "rustls", "botan", "tls"]
+categories = ["cryptography"]
 
 
 [features]
