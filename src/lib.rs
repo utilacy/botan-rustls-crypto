@@ -88,7 +88,7 @@ mod tests {
         let signed = rcgen::generate_simple_self_signed(vec!["localhost".to_string()]).unwrap();
         let cert_der: CertificateDer<'static> = signed.cert.der().clone();
         let key_der =
-            PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(signed.key_pair.serialize_der()));
+            PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(signed.signing_key.serialize_der()));
 
         // Server config backed by our Botan provider.
         let server_config = ServerConfig::builder_with_provider(Arc::new(provider()))
